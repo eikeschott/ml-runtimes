@@ -1,3 +1,57 @@
+FROM ubuntu:24.04 AS builder
+
+ARG HADOOP_VERSION=3.4.1
+ARG GDAL_VERSION=3.11.3
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ="Europe/Berlin"
+
+RUN apt-get update -qq && \
+    apt-get install -y --no-install-recommends \
+        software-properties-common \
+        wget \
+        build-essential \
+        cmake \
+        gcc \
+        gfortran \
+        git \
+        libudunits2-dev \
+        libgdal-dev \
+        libgeos-dev \
+        libproj-dev \
+        openjdk-11-jdk && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Set Java Home
+ENV JAVA_HOME=/usr/lib/jvm/java-1.11.0-openjdk-amd64
+
+# Download & Install Hadoop
+RUN wget https://downloads.apache.org/hadoop/common/hadoop-${HADOOP_VERSION}/hadoop-${HADOOP_VERSION}.tar.gz && \
+    tar -xzvf hadoop-${HADOOP_VERSION}.tar.gz && \
+    mv hadoop-${HADOOP_VERSION} /usr/local/hadoop && \
+    rm hadoop-${HADOOP_VERSION}.tar.gz
+
+# Set Hadoop Environment variables
+ENV HADOOP_HOME=/usr/local/hadoop
+ENV PATH="$PATH:/usr/local/hadoop/bin"
+
+# Download GDAL
+RUN wget https://github.com/OSGeo/gdal/releases/download/v${GDAL_VERSION}/gdal-${GDAL_VERSION}.tar.gz && \
+    tar -xzvf gdal-${GDAL_VERSION}.tar.gz && \
+    rm gdal-${GDAL_VERSION}.tar.gz
+
+
+# Build GDAL
+WORKDIR /gdal-${GDAL_VERSION}/build
+RUN cmake .. -DWITH_HDFS=ON -DHADOOP_INCLUDE_DIR=$HADOOP_HOME/include -DHADOOP_LIB_DIR=$HADOOP_HOME/lib/native \
+                -DWITH_JAVA=ON -DJAVA_AWT_INCLUDE_PATH=$JAVA_HOME/include -DJAVA_AWT_LIBRARY=$JAVA_HOME/lib \
+                -DCMAKE_BUILD_TYPE=Release && \
+    make && make install && ldconfig
+
+ENV LD_LIBRARY_PATH="/usr/local/lib"
+
+
 # Copyright 2025 Cloudera. All Rights Reserved.
 FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -71,7 +125,10 @@ RUN apt-get update && apt-get dist-upgrade -y && \
   mkdir -p /etc/pki/tls/certs && \
   ln -s /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt
 
-
+# Copy the GDAL binaries from the first stage
+COPY --from=builder /usr/local/bin/gdal* /usr/local/bin/
+COPY --from=builder /usr/local/include/*.h /usr/local/include/
+COPY --from=builder /usr/local/lib/libgdal* /usr/local/lib/
 
 WORKDIR /build
 
